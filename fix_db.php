@@ -11,11 +11,11 @@ try {
     $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
     $pdo->exec("SET NAMES 'UTF8'");
 
-    echo "<h2>🚀 Автоматическое обновление базы данных...</h2>";
+    echo "<h2>🚀 Обновление базы данных и привязка регионов...</h2>";
     echo "<p>Подключение к БД: <b>" . DB_NAME . "</b></p>";
 
     // ---------------------------------------------------------
-    // ШАГ 1: Создание столбца region_ids, если он не существует
+    // ШАГ 1: Проверка столбца region_ids
     // ---------------------------------------------------------
     echo "<h3>1. Проверка структуры таблицы...</h3>";
     
@@ -27,14 +27,14 @@ try {
     if ($count == 0) {
         echo "<p>Столбец <code>region_ids</code> не найден. Создаем...</p>";
         $pdo->exec("ALTER TABLE plants ADD COLUMN region_ids TEXT[]");
-        $pdo->exec("COMMENT ON COLUMN plants.region_ids IS 'Массив идентификаторов регионов: kerch, prisivashye, tarhankut, central, foothill, south_coast, mountains'");
+        $pdo->exec("COMMENT ON COLUMN plants.region_ids IS 'Массив идентификаторов регионов'");
         echo "<p style='color:green'>✔ Столбец успешно создан.</p>";
     } else {
         echo "<p style='color:blue'>ℹ Столбец <code>region_ids</code> уже существует.</p>";
     }
 
     // ---------------------------------------------------------
-    // ШАГ 2: Очистка старых данных
+    // ШАГ 2: Очистка таблиц
     // ---------------------------------------------------------
     echo "<h3>2. Очистка таблиц...</h3>";
     $pdo->exec("TRUNCATE TABLE areas RESTART IDENTITY CASCADE;");
@@ -42,9 +42,12 @@ try {
     echo "<p style='color:green'>✔ Таблицы очищены.</p>";
 
     // ---------------------------------------------------------
-    // ШАГ 3: Массив данных растений (Полный список)
+    // ШАГ 3: Данные растений
     // ---------------------------------------------------------
-    echo "<h3>3. Загрузка данных растений...</h3>";
+    echo "<h3>3. Загрузка растений...</h3>";
+    
+    // Вставьте сюда ваш массив $plantsData полностью
+    // Для примера оставлю структуру, замените на свой полный массив
     $plantsData = [
         // --- ПАПОРОТНИКООБРАЗНЫЕ ---
         ['Гроздовник полулунный', 'Botrychium lunaria', 'Гроздовниковые', 3, 'Небольшое многолетнее растение высотой 3-18 см. Лист разделён на стерильную часть с полулунными сегментами и спороносную часть в виде колоска.<br><br><b>Места произрастания:</b> Луга и каменистые склоны Яйлы.'],
@@ -211,14 +214,14 @@ try {
         $regions = [];
         $text = mb_strtolower($description);
 
-        // Ключевые слова для каждого региона
+        // Ключевые слова (ID должны совпадать с index.html)
         $keywords = [
             'kerch'       => ['керченск', 'керчь', 'казантип', 'опук', 'приазовье', 'мыс камен'],
             'prisivashye' => ['присиваш', 'сиваш', 'солен озер', 'солончак', 'степной кры'],
             'tarhankut'   => ['тарханкут', 'мыс атлеш', 'мыс большой атлеш', 'акангуль'],
             'central'     => ['центральн', 'равнин', 'степи кры', 'предгорье', 'внутренн гряд'],
             'foothill'    => ['предгор', 'лесостеп', 'средн пояс', 'дубово-грабинников', 'пушистодуб'],
-            'south_coast' => ['южн берег', 'юбк', 'приморск', 'побережь', 'пляж', 'дюн', 'авандюн', 'мыс мартьян', 'ай-даг', 'плака', 'кошка'],
+            'yubk'        => ['южн берег', 'юбк', 'приморск', 'побережь', 'пляж', 'дюн', 'авандюн', 'мыс мартьян', 'ай-даг', 'плака', 'кошка'],
             'mountains'   => ['горн кры', 'яйл', 'ай-петри', 'бабуган', 'демерджи', 'роман-кош', 'чатыр-даг', 'караби', 'верхн пояс', 'высот', 'м н.у.м', 'буков', 'соснов', 'редколесь', 'скал', 'осып', 'петрофит']
         ];
 
@@ -226,24 +229,26 @@ try {
             foreach ($words as $word) {
                 if (strpos($text, $word) !== false) {
                     $regions[] = $regionId;
-                    break; // Нашли хотя бы одно совпадение для региона
+                    break; 
                 }
             }
         }
 
-        // Если ничего не найдено, назначаем дефолтные регионы (Горный и Предгорье)
+        // Дефолтные регионы если ничего не найдено
         if (empty($regions)) {
-            $regions = ['foothill', 'mountains'];
+            $regions = ['foothill', 'mountains']; 
         }
 
         return array_unique($regions);
     }
 
-    $count = 0;
     $stmt = $pdo->prepare("INSERT INTO plants (rus_name, lat_name, family, status_code, description, region_ids) VALUES (:rus, :lat, :fam, :stat, :desc, :regions) RETURNING plant_id");
-
+    
+    $count = 0;
+    echo "<ul style='font-size: 12px; max-height: 400px; overflow-y: scroll;'>";
     foreach ($plantsData as $plant) {
         $detectedRegions = detectRegions($plant[4]);
+        $regionString = '{' . implode(',', $detectedRegions) . '}';
         
         $stmt->execute([
             ':rus' => $plant[0],
@@ -251,36 +256,45 @@ try {
             ':fam' => $plant[2],
             ':stat' => $plant[3],
             ':desc' => $plant[4],
-            ':regions' => '{' . implode(',', $detectedRegions) . '}' // Формат массива PostgreSQL
+            ':regions' => $regionString
         ]);
+        
+        echo "<li><b>{$plant[0]}</b> → Регионы: <span style='color:blue'>" . implode(', ', $detectedRegions) . "</span></li>";
         $count++;
     }
-
-    echo "<p style='color:green'>✔ Успешно добавлено растений: <b>$count</b></p>";
+    echo "</ul>";
+    echo "<p style='color:green'>✔ Добавлено растений: <b>$count</b></p>";
 
     // ---------------------------------------------------------
-    // ШАГ 4: Генерация геометрии (случайные точки)
+    // ШАГ 4: Генерация геометрии
     // ---------------------------------------------------------
     echo "<h3>4. Генерация гео-данных...</h3>";
     
     $geoStmt = $pdo->query("SELECT plant_id FROM plants WHERE plant_id NOT IN (SELECT plant_id FROM areas)");
     $ids = $geoStmt->fetchAll(PDO::FETCH_COLUMN);
-
     $insertGeo = $pdo->prepare("INSERT INTO areas (plant_id, geom) VALUES (:pid, ST_SetSRID(ST_MakePoint(:lon, :lat), 4326))");
     
+    // Координаты центров регионов (исправлено south_coast -> yubk)
+    $regionCenters = [
+        'kerch' => [35.9, 45.3],
+        'prisivashye' => [34.5, 45.8],
+        'tarhankut' => [32.8, 45.6],
+        'central' => [34.0, 45.4],
+        'foothill' => [34.2, 44.8],
+        'yubk' => [34.3, 44.5], // Исправлено
+        'mountains' => [34.4, 44.7]
+    ];
+
     foreach ($ids as $id) {
-        // Генерируем точку в пределах Крыма
-        $lon = 33.0 + (rand() / getrandmax()) * 3.8; 
-        $lat = 44.3 + (rand() / getrandmax()) * 1.9; 
-        
+        // Генерируем случайную точку в пределах Крыма
+        $lon = 33.2 + (rand() / getrandmax()) * 3.6; 
+        $lat = 44.4 + (rand() / getrandmax()) * 1.6; 
         $insertGeo->execute([':pid' => $id, ':lon' => $lon, ':lat' => $lat]);
     }
+    echo "<p style='color:green'>✔ Сгенерировано точек: <b>" . count($ids) . "</b></p>";
     
-    echo "<p style='color:green'>✔ Сгенерировано геоточек: <b>" . count($ids) . "</b></p>";
-    
-    echo "<hr><h3 style='color:green'>🎉 Готово! База данных полностью обновлена.</h3>";
-    echo "<p>Теперь можно открыть <a href='../client/index.html' style='font-weight:bold; color:#007bff;'>веб-сайт</a>.</p>";
-    echo "<p><small>Рекомендуется удалить этот файл (fix_db.php) после использования.</small></p>";
+    echo "<hr><h3 style='color:green'>🎉 Готово!</h3>";
+    echo "<p>Теперь можно открыть <a href='client/index.html' style='font-weight:bold; color:#007bff;'>веб-сайт</a>.</p>";
 
 } catch (PDOException $e) {
     echo "<p style='color:red'>❌ Ошибка БД: " . $e->getMessage() . "</p>";

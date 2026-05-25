@@ -75,7 +75,8 @@ SELECT
     cs.name as status_name,
     cs.color as status_color,
     p.description,
-    (SELECT json_agg(row_to_json(a)) 
+    p.region_ids,
+    (SELECT json_agg(row_to_json(a))
      FROM (SELECT ST_AsGeoJSON(geom)::json as geometry FROM areas WHERE plant_id = p.plant_id) a) as areas_geo,
     (SELECT url FROM images WHERE plant_id = p.plant_id AND is_main = TRUE LIMIT 1) as main_image
 FROM plants p

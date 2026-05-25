@@ -1,5 +1,4 @@
 <?php
-// Путь должен вести из папки server/ в server/config.php
 require_once 'config.php'; 
 
 class Database {
@@ -14,7 +13,6 @@ class Database {
             $this->conn->exec("SET NAMES 'UTF8'");
             $this->conn->exec("SET client_encoding TO 'UTF8'");
         } catch (PDOException $e) {
-            // Пробрасываем ошибку выше, чтобы её поймал api/plants.php
             throw $e;
         }
     }
