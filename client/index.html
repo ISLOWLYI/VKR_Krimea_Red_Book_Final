@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Красная книга Республики Крым</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    
+    <style>
+        body { font-family: 'Inter', sans-serif; overflow: hidden; }
+        #map { height: 100vh; width: 100%; z-index: 0; background: #aad3df; }
+        .sidebar { z-index: 1000; }
+        .legend-item { display: flex; align-items: center; margin-bottom: 6px; font-size: 13px; cursor: pointer; transition: opacity 0.2s; }
+        .legend-item:hover { opacity: 0.8; }
+        .legend-color { width: 16px; height: 16px; border-radius: 4px; margin-right: 10px; border: 1px solid rgba(0,0,0,0.2); }
+        
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #f1f1f1; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+        
+        .coord-panel { transition: opacity 0.3s ease; pointer-events: none; }
+        
+        /* Скрытие атрибуции Leaflet */
+        .leaflet-control-attribution { display: none !important; }
+        
+        #modal.open { pointer-events: auto; }
+        
+        /* Стили для полигонов */
+        .geo-zone { fill-opacity: 0.6; stroke-opacity: 0.8; stroke-width: 1px; transition: all 0.3s ease; }
+        .geo-zone:hover { fill-opacity: 0.8; stroke-width: 2px; filter: brightness(1.1); }
+        .geo-zone.active { fill-opacity: 0.9; stroke-width: 3px; stroke: #fff; filter: brightness(1.2); }
+    </style>
+</head>
+<body class="bg-gray-100 relative">
+
+    <!-- Панель координат -->
+    <div id="coordPanel" class="coord-panel absolute top-4 right-4 bg-white/90 backdrop-blur px-4 py-2 rounded-lg shadow-lg text-sm font-mono text-gray-700 z-[1000] opacity-0 pointer-events-none">
+        Широта: <span id="latVal" class="font-bold">-</span>, Долгота: <span id="lonVal" class="font-bold">-</span>
+    </div>
+
+    <!-- Боковая панель -->
+    <div class="sidebar absolute top-0 left-0 h-full w-full md:w-96 bg-white shadow-xl flex flex-col transform transition-transform duration-300 -translate-x-full md:translate-x-0 z-[1001]">
+        <div class="p-5 bg-emerald-700 text-white shadow-md shrink-0">
+            <h1 class="text-xl font-bold flex items-center gap-2">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                Красная книга Крыма
+            </h1>
+            <p class="text-xs text-emerald-200 mt-1">Веб-ГИС мониторинг</p>
+        </div>
+
+        <!-- Фильтр по региону (заголовок списка) -->
+        <div id="regionFilterHeader" class="hidden p-4 bg-blue-50 border-b border-blue-100 shrink-0">
+            <div class="flex justify-between items-center">
+                <div>
+                    <p class="text-xs text-blue-500 uppercase font-bold">Выбрана область:</p>
+                    <h3 id="currentRegionName" class="font-bold text-blue-800 text-lg">Название</h3>
+                </div>
+                <button onclick="resetFilter()" class="text-xs bg-white border border-blue-200 text-blue-600 hover:bg-blue-100 px-2 py-1 rounded transition">
+                    ✕ Сброс
+                </button>
+            </div>
+        </div>
+
+        <div class="p-4 border-b border-gray-200 shrink-0">
+            <input type="text" id="searchInput" placeholder="Поиск растения..." 
+                class="w-full pl-4 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none">
+        </div>
+
+        <div id="plantsList" class="flex-1 overflow-y-auto p-2 space-y-2 bg-gray-50">
+            <div class="text-center text-gray-500 mt-10 animate-pulse">Загрузка данных...</div>
+        </div>
+
+        <div class="p-4 bg-white border-t border-gray-200 shrink-0">
+            <h3 class="text-xs font-bold text-gray-500 uppercase mb-2">Области Крыма</h3>
+            <div id="legendContainer" class="grid grid-cols-1 gap-y-1"></div>
+        </div>
+    </div>
+
+    <button id="menuToggle" class="md:hidden absolute top-4 left-4 z-[1002] bg-white p-2 rounded-lg shadow-lg text-emerald-700">
+        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
+    </button>
+
+    <div id="map"></div>
+
+    <!-- Модальное окно -->
+    <div id="modal" class="fixed inset-0 bg-black/50 z-[2000] hidden flex items-center justify-end sm:justify-center p-0 sm:p-4 backdrop-blur-sm">
+        <div class="bg-white rounded-l-xl sm:rounded-xl shadow-2xl w-full sm:max-w-md max-h-[90vh] overflow-y-auto flex flex-col">
+            <div class="relative shrink-0">
+                <img id="modalImg" src="" alt="Plant" class="w-full h-48 object-cover bg-gray-200">
+                <button onclick="closeModal()" class="absolute top-2 right-2 bg-white/90 hover:bg-white text-gray-800 rounded-full p-1.5 shadow-lg">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
+                <div id="modalStatus" class="absolute bottom-2 left-2 px-3 py-1 rounded-full text-white text-xs font-bold shadow-lg"></div>
+                <div id="modalRegionBadge" class="absolute top-2 left-2 px-2 py-1 bg-black/60 text-white text-xs rounded backdrop-blur-sm flex flex-wrap gap-1 max-w-[90%]"></div>
+            </div>
+            
+            <div class="p-5">
+                <h2 id="modalTitleRu" class="text-xl font-bold text-gray-900 mb-1"></h2>
+                <p id="modalTitleLat" class="text-sm text-emerald-600 italic mb-3"></p>
+                
+                <div class="text-xs text-gray-600 border-b pb-3 mb-3 flex justify-between">
+                    <span><span class="font-semibold">Семейство:</span> <span id="modalFamily"></span></span>
+                    <span id="modalStatusCode" class="font-bold text-gray-800"></span>
+                </div>
+
+                <h3 class="font-bold text-gray-800 mb-1 text-sm">Описание</h3>
+                <div id="modalDesc" class="text-gray-600 text-sm leading-relaxed mb-4"></div>
+
+                <div class="bg-blue-50 p-3 rounded-lg border border-blue-100">
+                    <h3 class="font-bold text-blue-800 mb-1 text-xs uppercase">Ареал обитания</h3>
+                    <p id="modalAreas" class="text-blue-700 text-xs mb-2"></p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    
+    <script>
+        // --- КОНФИГУРАЦИЯ ОБЛАСТЕЙ ---
+        const regions = [
+            {
+                id: 'kerch',
+                name: 'Керченский полуостров',
+                color: '#E67E22',
+                coords: [[45.121506,35.525665], [45.282134,35.527725], [45.460612,35.824356], [45.463983,35.873108], [45.369996,35.999451], [45.439899,36.071548], [45.479392,36.280975], [45.482762,36.342087], [45.454351,36.478043], [45.439417,36.588593], [45.381572,36.647644], [45.360830,36.626358], [45.345389,36.606445], [45.317392,36.500015], [45.271504,36.440277], [45.162674,36.418991], [45.104546,36.450577], [45.089520,36.450577], [45.056061,36.374359], [45.029377,36.230164], [45.011904,35.954819], [44.997339,35.836716], [45.127320,35.577164], [45.122475,35.525665]]
+            },
+            {
+                id: 'prisivashye',
+                name: 'Присивашье',
+                color: '#F1C40F',
+                coords: [[45.296143,35.474854], [45.181069,35.363617], [45.336702,34.928284], [45.437008,34.929657], [45.650528,34.646759], [45.708097,34.394073], [45.858456,34.012299], [45.925364,33.763733], [45.952104,33.754120], [45.947330,33.629150], [46.139880,33.642883], [46.180781,33.733521], [46.102757,34.050751], [46.063703,34.157867], [45.938736,34.484711], [45.808700,34.792328], [45.751235,34.958496], [45.531365,35.182343], [45.349250,35.374603]]
+            },
+            {
+                id: 'tarhankut',
+                name: 'Тарханкутское плато',
+                color: '#D35400',
+                coords: [[45.720563,33.232269], [45.552525,33.317413], [45.470725,33.258362], [45.302905,33.033142], [45.356970,32.920532], [45.364690,32.855988], [45.367584,32.820282], [45.365655,32.780457], [45.360830,32.737885], [45.341528,32.709045], [45.327048,32.681580], [45.311598,32.655487], [45.318357,32.607422], [45.324151,32.577209], [45.329944,32.540131], [45.335737,32.498932], [45.355040,32.504425], [45.374338,32.508545], [45.386877,32.482452], [45.403271,32.487946], [45.419660,32.497559], [45.431226,32.515411], [45.447607,32.531891], [45.463020,32.555237], [45.481318,32.595062], [45.490946,32.615662], [45.501534,32.648621], [45.514046,32.678833], [45.512121,32.709045], [45.527517,32.710419], [45.540022,32.729645], [45.548679,32.748871], [45.555410,32.791443], [45.554449,32.829895], [45.570794,32.843628], [45.586173,32.821655], [45.596744,32.845001], [45.610195,32.857361], [45.620761,32.890320], [45.638047,32.921906], [45.652448,32.954865], [45.668765,32.991943], [45.683158,33.022156], [45.694670,33.059235], [45.707138,33.100433], [45.714810,33.130646], [45.726315,33.153992], [45.733025,33.191071], [45.763691,33.163605], [45.793382,33.170471]]
+            },
+            {
+                id: 'central',
+                name: 'Центральная равнина',
+                color: '#27AE60',
+                coords: [[45.756026,33.211670], [45.750277,33.247375], [45.755068,33.276215], [45.764649,33.310547], [45.776144,33.342133], [45.788594,33.364105], [45.804871,33.394318], [45.828799,33.419037], [45.811572,33.457489], [45.836454,33.453369], [45.834540,33.473969], [45.852717,33.476715], [45.857499,33.511047], [45.846021,33.533020], [45.862281,33.568726], [45.887140,33.611298], [45.871844,33.655243], [45.846021,33.682709], [45.905300,33.686829], [45.923453,33.723907], [45.895743,33.752747], [45.879493,33.828278], [45.840281,33.965607], [45.769439,34.105682], [45.725356,34.208679], [45.678361,34.346008], [45.620761,34.442139], [45.604431,34.615173], [45.445680,34.819794], [45.359865,34.817047], [45.312563,34.865112], [45.249755,34.965363], [45.210101,35.138397], [45.175261,35.249634], [45.165579,35.327911], [45.134586,35.375977], [45.121991,35.322418], [45.146211,35.234528], [45.169452,35.116425], [45.185909,34.955750], [45.188812,34.932404], [45.211069,34.888458], [45.230415,34.834900], [45.227513,34.740143], [45.213004,34.624786], [45.194619,34.525909], [45.178165,34.508057], [45.145242,34.481964], [45.121022,34.449005], [45.104546,34.394073], [45.097761,34.340515], [45.084188,34.288330], [45.071581,34.248505], [45.050240,34.178467], [45.042478,34.098816], [45.031803,34.027405], [45.008506,33.988953], [44.978400,33.953247], [44.958968,33.927155], [44.937585,33.854370], [44.908414,33.831024], [44.882147,33.820038], [44.849054,33.792572], [44.820812,33.744507], [44.799378,33.704681], [44.783785,33.663483], [44.755511,33.592072], [44.726247,33.554993], [44.753560,33.541260], [44.777936,33.537140], [44.792556,33.537140], [44.807173,33.554993], [44.839317,33.576965], [44.844186,33.596191], [44.869496,33.607178], [44.898687,33.614044], [44.921057,33.615417], [44.940501,33.608551], [44.957024,33.607178], [44.976457,33.603058], [44.993940,33.605804], [45.022097,33.598938], [45.035685,33.590698], [45.049270,33.579712], [45.065762,33.572845], [45.079339,33.567352], [45.090975,33.549500], [45.112300,33.546753], [45.131680,33.513794], [45.156864,33.494568], [45.181069,33.451996], [45.199458,33.419037], [45.193651,33.392944], [45.181069,33.359985], [45.173324,33.328400], [45.163642,33.296814], [45.151053,33.289948], [45.149116,33.256989], [45.165579,33.243256], [45.178165,33.210297], [45.183973,33.182831], [45.194619,33.158112], [45.214938,33.141632], [45.233316,33.115540], [45.263289,33.092194], [45.284550,33.050995], [45.300007,33.082581], [45.326082,33.130646], [45.373373,33.189697], [45.414840,33.248749], [45.447607,33.292694], [45.471688,33.314667], [45.516933,33.340759], [45.555410,33.354492], [45.590978,33.331146], [45.646688,33.306427], [45.663007,33.298187], [45.686996,33.289948], [45.718645,33.273468], [45.731108,33.259735], [45.739735,33.228149]]
+            },
+            {
+                id: 'foothill',
+                name: 'Предгорная лесостепь',
+                color: '#16A085',
+                coords: [[44.723808,33.555164], [44.724662,33.549156], [44.714172,33.547268], [44.687451,33.548470], [44.650826,33.539543], [44.632505,33.512421], [44.615400,33.503494], [44.611490,33.486328], [44.609535,33.463669], [44.606113,33.449936], [44.603180,33.433456], [44.594379,33.420410], [44.589489,33.399124], [44.583132,33.377151], [44.558185,33.399124], [44.542526,33.427963], [44.523437,33.462296], [44.496995,33.486328], [44.498464,33.519287], [44.487199,33.548813], [44.488668,33.584518], [44.492587,33.596878], [44.505810,33.603058], [44.515604,33.619537], [44.524906,33.638077], [44.520500,33.664856], [44.528332,33.698502], [44.532248,33.719101], [44.535185,33.747940], [44.542037,33.784332], [44.564056,33.802185], [44.580687,33.804932], [44.599268,33.794632], [44.616867,33.792572], [44.632505,33.791885], [44.647651,33.800125], [44.661816,33.815231], [44.672559,33.837204], [44.682813,33.852310], [44.702338,33.857117], [44.728687,33.901062], [44.744295,33.924408], [44.764774,33.932648], [44.782810,33.934021], [44.796454,33.955994], [44.810096,33.987579], [44.828604,34.001312], [44.846133,34.030838], [44.823734,34.092636], [44.824708,34.118729], [44.833961,34.135208], [44.851975,34.148254], [44.858303,34.155807], [44.874362,34.165421], [44.884580,34.176407], [44.891877,34.197693], [44.903064,34.218292], [44.907928,34.226532], [44.924460,34.248505], [44.956538,34.279404], [44.967227,34.315109], [44.974514,34.363861], [44.985685,34.404373], [44.986656,34.435272], [44.987627,34.477158], [44.991027,34.515610], [45.000738,34.575348], [45.003166,34.612427], [45.005108,34.659805], [45.008020,34.691391], [45.013360,34.712677], [45.030833,34.740143], [45.046359,34.766235], [45.045389,34.801941], [45.045389,34.854126], [45.040537,34.878845], [45.042478,34.932404], [45.044419,34.985962], [45.042478,35.066986], [45.039567,35.139771], [45.028892,35.201569], [45.026950,35.240021], [45.033744,35.301819], [45.032774,35.351257], [45.035685,35.381470], [45.061882,35.395203], [45.095822,35.388336], [45.117146,35.377350], [45.109393,35.322418], [45.125867,35.274353], [45.145242,35.201569], [45.154927,35.146637], [45.162674,35.082092], [45.172356,35.006561], [45.182521,34.954033], [45.185304,34.931545], [45.189901,34.922104], [45.195103,34.908199], [45.204538,34.889488], [45.212157,34.874039], [45.215059,34.862709], [45.224974,34.838161], [45.227876,34.820652], [45.224128,34.789925], [45.222798,34.756966], [45.223040,34.721947], [45.218929,34.684868], [45.215664,34.668045], [45.213366,34.647789], [45.210101,34.624958], [45.207561,34.607620], [45.201877,34.575863], [45.195950,34.545135], [45.190990,34.527798], [45.144637,34.486942], [45.119205,34.453983], [45.101396,34.396133], [45.093762,34.341373], [45.080794,34.292107], [45.068308,34.246101], [45.048785,34.181385], [45.043934,34.143620], [45.038233,34.082336], [45.027193,34.027920], [45.006200,33.992043], [44.975485,33.956509], [44.955688,33.929901], [44.940866,33.874111], [44.936734,33.861580], [44.929564,33.850765], [44.910116,33.835831], [44.882756,33.823643], [44.849297,33.797035], [44.818133,33.747597], [44.796820,33.706226], [44.775133,33.653183], [44.752707,33.594818], [44.746977,33.583832], [44.737345,33.571472], [44.729418,33.562717], [44.724174,33.557739]]
+            },
+            {
+                id: 'yubk',
+                name: 'Южный берег Крыма (ЮБК)',
+                color: '#E91E63',
+                coords: [[44.478871,33.629494], [44.466131,33.637390], [44.448487,33.642540], [44.438928,33.642883], [44.426670,33.650093], [44.418088,33.666229], [44.415881,33.685112], [44.420295,33.704338], [44.412448,33.710861], [44.392334,33.728027], [44.387428,33.739014], [44.387428,33.768883], [44.386937,33.786392], [44.392089,33.803558], [44.395769,33.819351], [44.399694,33.834801], [44.403128,33.882866], [44.399203,33.908615], [44.394052,33.932304], [44.389881,33.951530], [44.390372,33.972473], [44.398958,33.984489], [44.399448,34.001312], [44.404354,34.030495], [44.409995,34.041138], [44.415636,34.051094], [44.421276,34.071693], [44.425934,34.091263], [44.427651,34.106026], [44.426915,34.121132], [44.435496,34.130058], [44.445301,34.137611], [44.458290,34.143105], [44.469071,34.150314], [44.480095,34.156837], [44.492342,34.164734], [44.497975,34.176064], [44.497975,34.188766], [44.499199,34.205246], [44.503117,34.216232], [44.503607,34.231682], [44.506055,34.247475], [44.513890,34.261551], [44.521479,34.268417], [44.532738,34.273567], [44.543016,34.279060], [44.544729,34.298973], [44.552803,34.312363], [44.550112,34.326096], [44.545952,34.341888], [44.550356,34.348068], [44.559653,34.347382], [44.567969,34.347725], [44.578975,34.350471], [44.584844,34.351501], [44.590956,34.367638], [44.596090,34.374161], [44.608068,34.376907], [44.622243,34.383430], [44.632749,34.391327], [44.637636,34.400597], [44.673292,34.419479], [44.684766,34.431496], [44.696237,34.443169], [44.707950,34.454842], [44.716002,34.470978], [44.726491,34.489174], [44.733077,34.513550], [44.737954,34.531403], [44.751122,34.565048], [44.773062,34.618607], [44.787196,34.665985], [44.811070,34.747009], [44.813506,34.841766], [44.816428,34.909744], [44.835422,34.949570], [44.828117,34.989395], [44.800352,35.051193], [44.791582,35.078659], [44.808147,35.108185], [44.823734,35.132217], [44.868523,35.145264], [44.905010,35.174789], [44.910845,35.207062], [44.915708,35.239334], [44.937585,35.253067], [44.956538,35.249634], [44.965284,35.264053], [44.967227,35.284653], [44.963826,35.297012], [44.962855,35.329285], [44.955081,35.354004], [44.945361,35.382843], [44.955081,35.389023], [44.974999,35.353317], [44.977428,35.345078], [44.982042,35.302505], [44.989813,35.273666], [44.964312,35.207405], [44.940987,35.183372], [44.935155,35.158653], [44.921786,35.128441], [44.888472,35.092392], [44.886283,35.077629], [44.887256,35.039864], [44.881418,35.015831], [44.874119,34.994202], [44.864386,34.987679], [44.860736,34.969826], [44.864386,34.960556], [44.867550,34.948196], [44.873389,34.913177], [44.872903,34.876785], [44.883607,34.847260], [44.887985,34.799881], [44.876309,34.749756], [44.866576,34.710617], [44.862196,34.673538], [44.839804,34.661865], [44.814967,34.656372], [44.803763,34.612427], [44.795480,34.571228], [44.787196,34.528656], [44.771599,34.477844], [44.748684,34.445572], [44.727223,34.402313], [44.700386,34.377594], [44.679395,34.337082], [44.645697,34.308243], [44.634948,34.265671], [44.600735,34.229279], [44.584110,34.210739], [44.566013,34.157867], [44.544973,34.124222], [44.522458,34.087143], [44.495526,34.028778], [44.489158,33.962860], [44.476421,33.894882], [44.486219,33.865356], [44.513645,33.841324], [44.521968,33.794632], [44.519520,33.736267], [44.517562,33.719101], [44.504831,33.667603], [44.486219,33.626404]]
+            },
+            {
+                id: 'mountains',
+                name: 'Яйлы и Горные Леса',
+                color: '#2E7D32',
+                coords: [[44.519031,33.726654], [44.525885,33.712921], [44.534696,33.712234], [44.543505,33.716354], [44.557206,33.734207], [44.570415,33.789825], [44.568948,33.820038], [44.542526,33.846817], [44.536653,33.869476], [44.531759,33.902435], [44.526374,33.927155], [44.529311,33.963547], [44.535185,33.978653], [44.548399,33.995132], [44.555739,34.015732], [44.558185,34.037018], [44.559653,34.068604], [44.563567,34.098129], [44.569437,34.113922], [44.580197,34.131088], [44.589978,34.155121], [44.603180,34.176407], [44.621754,34.183960], [44.639346,34.182587], [44.648139,34.194260], [44.662304,34.210052], [44.673536,34.212112], [44.680372,34.212799], [44.710634,34.214859], [44.719417,34.240952], [44.728687,34.260178], [44.736491,34.282150], [44.742344,34.315796], [44.753073,34.343262], [44.763799,34.370041], [44.789145,34.380341], [44.798403,34.380341], [44.810096,34.376221], [44.822760,34.387207], [44.825682,34.418106], [44.825682,34.442139], [44.816916,34.465485], [44.806686,34.475784], [44.795480,34.490891], [44.787196,34.495697], [44.777936,34.495010], [44.768187,34.474411], [44.764287,34.462051], [44.754535,34.443512], [44.745270,34.426346], [44.733565,34.402313], [44.723320,34.392014], [44.709658,34.376907], [44.698922,34.362488], [44.687695,34.341202], [44.672559,34.322662], [44.658885,34.309616], [44.640811,34.271164], [44.632016,34.248505], [44.617355,34.234772], [44.600735,34.221039], [44.588511,34.209366], [44.578730,34.183273], [44.570904,34.151688], [44.559163,34.131775], [44.547910,34.113922], [44.535185,34.094009], [44.524416,34.074783], [44.515114,34.047318], [44.504341,34.010925], [44.496016,33.977966], [44.491118,33.933334], [44.490138,33.892822], [44.504831,33.863983], [44.518541,33.843384], [44.522458,33.813858], [44.524416,33.768539], [44.523927,33.734894]]
+            }
+        ];
+
+        let map;
+        let layerGroup;
+        let currentFilterRegion = null;
+        let displayedPlants = [];
+        let plantsData = []; // Данные будут загружены из БД
+
+        // Статусы охраны
+        const statuses = {
+            0: { name: "Исчезнувшие", color: "#000000" },
+            1: { name: "Исчезающие", color: "#FF0000" },
+            2: { name: "Уязвимые", color: "#FFA500" },
+            3: { name: "Редкие", color: "#FFFF00" },
+            4: { name: "Неопределенные", color: "#008000" },
+            5: { name: "Восстанавливаемые", color: "#0000FF" }
+        };
+
+        function initMap() {
+            map = L.map('map', {
+                center: [45.0, 34.0],
+                zoom: 8,
+                minZoom: 7,
+                maxZoom: 14,
+                zoomControl: false
+            });
+
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: ''
+            }).addTo(map);
+
+            L.control.zoom({ position: 'bottomright' }).addTo(map);
+            layerGroup = L.layerGroup().addTo(map);
+
+            drawRegions();
+            renderLegend();
+            loadPlants(); // Загрузка данных из БД
+
+            setupEventListeners();
+        }
+
+        function loadPlants() {
+            fetch('server/api/plants.php?action=list')
+                .then(response => {
+                    if (!response.ok) throw new Error('Network response was not ok');
+                    return response.json();
+                })
+                .then(data => {
+                    plantsData = data;
+                    filterAndRenderList();
+                })
+                .catch(error => {
+                    console.error('Ошибка загрузки растений:', error);
+                    document.getElementById('plantsList').innerHTML = 
+                        `<div class="text-center text-red-500 p-4">Ошибка загрузки данных.<br><small>${error.message}</small></div>`;
+                });
+        }
+
+        function drawRegions() {
+            regions.forEach(region => {
+                const polygon = L.polygon(region.coords, {
+                    color: region.color,
+                    fillColor: region.color,
+                    fillOpacity: 0.5,
+                    weight: 1,
+                    className: 'geo-zone'
+                }).addTo(layerGroup);
+
+                polygon.regionData = region;
+                polygon.on('click', () => onRegionClick(region));
+                polygon.on('mouseover', () => {
+                    if (currentFilterRegion !== region.id) {
+                        polygon.setStyle({ fillOpacity: 0.7, weight: 2 });
+                    }
+                });
+                polygon.on('mouseout', () => {
+                    if (currentFilterRegion !== region.id) {
+                        polygon.setStyle({ fillOpacity: 0.5, weight: 1 });
+                    }
+                });
+            });
+        }
+
+        function onRegionClick(region) {
+            if (currentFilterRegion === region.id) {
+                resetFilter();
+                return;
+            }
+
+            currentFilterRegion = region.id;
+            
+            layerGroup.eachLayer(layer => {
+                if (layer.regionData && layer.regionData.id === region.id) {
+                    layer.setStyle({ fillOpacity: 0.9, weight: 3, color: '#fff' });
+                    layer.bringToFront();
+                } else {
+                    layer.setStyle({ fillOpacity: 0.3, weight: 1, color: layer.regionData.color });
+                }
+            });
+
+            filterAndRenderList();
+
+            const bounds = L.latLngBounds(region.coords);
+            map.fitBounds(bounds, { padding: [50, 50] });
+
+            document.getElementById('regionFilterHeader').classList.remove('hidden');
+            document.getElementById('currentRegionName').textContent = region.name;
+        }
+
+        function resetFilter() {
+            currentFilterRegion = null;
+            
+            layerGroup.eachLayer(layer => {
+                if (layer.regionData) {
+                    layer.setStyle({ fillOpacity: 0.5, weight: 1, color: layer.regionData.color });
+                }
+            });
+
+            filterAndRenderList();
+            document.getElementById('regionFilterHeader').classList.add('hidden');
+        }
+
+        function getPlantRegions(plant) {
+            // Парсим поле region_ids из БД (формат PostgreSQL "{id1,id2}" или массив)
+            let plantRegions = [];
+            if (Array.isArray(plant.region_ids)) {
+                plantRegions = plant.region_ids;
+            } else if (typeof plant.region_ids === 'string') {
+                const clean = plant.region_ids.replace(/[{}]/g, '');
+                if (clean) plantRegions = clean.split(',');
+            }
+            return plantRegions;
+        }
+
+        function filterAndRenderList() {
+            const searchTerm = document.getElementById('searchInput').value.toLowerCase();
+            
+            displayedPlants = plantsData.filter(plant => {
+                const matchesSearch = plant.rus_name.toLowerCase().includes(searchTerm) || 
+                                      plant.lat_name.toLowerCase().includes(searchTerm);
+                
+                let matchesRegion = true;
+                if (currentFilterRegion) {
+                    const plantRegions = getPlantRegions(plant);
+                    if (plantRegions.length === 0) {
+                        matchesRegion = true;
+                    } else {
+                        matchesRegion = plantRegions.includes(currentFilterRegion);
+                    }
+                }
+
+                return matchesSearch && matchesRegion;
+            });
+
+            renderList(displayedPlants);
+        }
+
+        function renderList(plants) {
+            const container = document.getElementById('plantsList');
+            container.innerHTML = '';
+            
+            if (plants.length === 0) {
+                container.innerHTML = '<div class="text-center text-gray-500 p-4">В этой области растений не найдено</div>';
+                return;
+            }
+
+            plants.forEach(plant => {
+                const status = statuses[plant.status_code] || { name: '?', color: '#ccc' };
+                const card = document.createElement('div');
+                card.className = 'bg-white p-3 rounded-lg shadow-sm hover:shadow-md cursor-pointer transition border-l-4';
+                card.style.borderLeftColor = status.color;
+                card.onclick = () => showPlantDetails(plant);
+
+                // Обработка регионов для отображения в списке
+                const plantRegions = getPlantRegions(plant);
+                let regionBadges = '';
+                if (plantRegions.length > 0) {
+                    const rName = getRegionName(plantRegions[0]);
+                    const rColor = regions.find(x => x.id === plantRegions[0])?.color || '#ccc';
+                    const more = plantRegions.length > 1 ? ` +${plantRegions.length - 1}` : '';
+                    regionBadges = `<span class="inline-block text-[10px] px-2 py-0.5 rounded-full text-white ml-2" style="background-color: ${rColor}">${rName}${more}</span>`;
+                }
+
+                card.innerHTML = `
+                    <div class="flex-1 min-w-0">
+                        <h3 class="font-bold text-gray-800 truncate">${plant.rus_name}</h3>
+                        <p class="text-xs text-gray-500 italic truncate">${plant.lat_name}</p>
+                        <div class="flex items-center mt-1 gap-2">
+                            <span class="inline-block text-[10px] px-2 py-0.5 rounded-full text-white" style="background-color: ${status.color}">
+                                ${status.name}
+                            </span>
+                            ${regionBadges}
+                        </div>
+                    </div>
+                `;
+                container.appendChild(card);
+            });
+        }
+
+        function getRegionName(id) {
+            const r = regions.find(x => x.id === id);
+            return r ? r.name : '';
+        }
+
+        function renderLegend() {
+            const container = document.getElementById('legendContainer');
+            container.innerHTML = '';
+            
+            regions.forEach(region => {
+                const item = document.createElement('div');
+                item.className = 'legend-item';
+                item.onclick = () => onRegionClick(region);
+                item.innerHTML = `
+                    <div class="legend-color" style="background-color: ${region.color}"></div>
+                    <span>${region.name}</span>
+                `;
+                container.appendChild(item);
+            });
+        }
+
+        function showPlantDetails(plant) {
+            const modal = document.getElementById('modal');
+            const status = statuses[plant.status_code] || { name: '?', color: '#ccc' };
+
+            document.getElementById('modalTitleRu').textContent = plant.rus_name;
+            document.getElementById('modalTitleLat').textContent = plant.lat_name;
+            document.getElementById('modalFamily').textContent = plant.family || '-';
+            document.getElementById('modalDesc').innerHTML = plant.description || 'Нет описания.';
+            document.getElementById('modalAreas').textContent = plant.areas || plant.description || 'Нет данных';
+            
+            const badge = document.getElementById('modalStatus');
+            badge.textContent = status.name;
+            badge.style.backgroundColor = status.color;
+
+            const codeBadge = document.getElementById('modalStatusCode');
+            codeBadge.textContent = `Статус: ${plant.status_code}`;
+
+            const regionBadgeContainer = document.getElementById('modalRegionBadge');
+            regionBadgeContainer.innerHTML = '';
+            
+            const plantRegions = getPlantRegions(plant);
+            if (plantRegions.length > 0) {
+                const badges = plantRegions.map(rId => {
+                    const r = regions.find(x => x.id === rId);
+                    const color = r ? r.color : '#ccc';
+                    const name = r ? r.name : rId;
+                    return `<span class="px-2 py-1 rounded text-xs text-white mr-1" style="background-color: ${color}">${name}</span>`;
+                }).join('');
+                regionBadgeContainer.innerHTML = badges;
+                regionBadgeContainer.classList.remove('hidden');
+            } else {
+                regionBadgeContainer.classList.add('hidden');
+            }
+
+            const img = document.getElementById('modalImg');
+            // Если у вас есть поле image в БД, раскомментируйте строку ниже
+            // img.src = plant.image || 'https://via.placeholder.com/400x200?text=Нет+фото';
+            img.src = 'https://via.placeholder.com/400x200?text=Нет+фото'; 
+
+            modal.classList.remove('hidden');
+            setTimeout(() => modal.classList.add('open'), 10);
+        }
+
+        function closeModal() {
+            const modal = document.getElementById('modal');
+            modal.classList.remove('open');
+            setTimeout(() => modal.classList.add('hidden'), 300);
+        }
+
+        function setupEventListeners() {
+            document.getElementById('searchInput').addEventListener('input', filterAndRenderList);
+
+            document.getElementById('menuToggle').addEventListener('click', () => {
+                document.querySelector('.sidebar').classList.toggle('-translate-x-full');
+            });
+
+            map.on('click', function (e) {
+                const coords = e.latlng;
+                document.getElementById('latVal').textContent = coords.lat.toFixed(5);
+                document.getElementById('lonVal').textContent = coords.lng.toFixed(5);
+                const panel = document.getElementById('coordPanel');
+                panel.classList.remove('opacity-0');
+                setTimeout(() => panel.classList.add('opacity-0'), 3000);
+            });
+
+            document.getElementById('modal').addEventListener('click', (e) => {
+                if (e.target.id === 'modal') closeModal();
+            });
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape') closeModal();
+            });
+        }
+
+        document.addEventListener('DOMContentLoaded', initMap);
+    </script>
+</body>
+</html>
