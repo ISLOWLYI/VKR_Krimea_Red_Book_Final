@@ -7,7 +7,7 @@ require_once 'server/config.php';
 
 try {
     $dsn = "pgsql:host=" . DB_HOST . ";port=" . DB_PORT . ";dbname=" . DB_NAME . ";";
-    $pdo = new PDO($dsn, DB_USER, DB_PASSWORD);
+    $pdo = new PDO('pgsql:host=db;port=5432;dbname=redbook_crimea', 'postgres', '29292929');
     $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
     $pdo->exec("SET NAMES 'UTF8'");
 

@@ -1,0 +1,48 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgis/postgis:15-3.3
+    container_name: redbook_db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: 29292929
+      POSTGRES_DB: redbook_crimea
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build: .
+    container_name: redbook_app
+    ports:
+      - "8000:80"
+    volumes:
+      - .:/var/www/html
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: redbook_crimea
+      DB_USER: postgres
+      DB_PASSWORD: 29292929
+    command: >
+      sh -c "
+        echo 'Waiting for database to be ready...' &&
+        sleep 5 &&
+        echo 'Initializing database...' &&
+        php fix_db.php &&
+        echo 'Starting Apache...' &&
+        apache2-foreground
+      "
+
+volumes:
+  pgdata:

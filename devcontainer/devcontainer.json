@@ -1,0 +1,17 @@
+{
+  "name": "Red Book Crimea Project",
+  "dockerComposeFile": "../docker-compose.yml",
+  "service": "app",
+  "workspaceFolder": "/var/www/html",
+  "settings": {
+    "terminal.integrated.shell.linux": "/bin/bash"
+  },
+  "extensions": [
+    "xdebug.php-debug",
+    "ikappas.phpcs",
+    "ms-vscode.vscode-typescript-next"
+  ],
+  "forwardPorts": [8000, 5432],
+  "postCreateCommand": "bash setup.sh",
+  "remoteUser": "root"
+}

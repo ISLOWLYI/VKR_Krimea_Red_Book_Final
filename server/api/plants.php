@@ -1,6 +1,7 @@
 <?php
+
 // Отключаем вывод ошибок в HTML, чтобы не ломать JSON (ошибки будут в логе PHP)
-ini_set('display_errors', 0);
+ini_set('display_errors', 1);
 error_reporting(E_ALL);
 
 // Логирование ошибок в файл для отладки (если нужно)
